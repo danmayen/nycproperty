@@ -137,3 +137,15 @@ range(nycproperty_raw$block)
 # "BUILDING CLASS AT TIME OF SALE"
 # "SALE PRICE"                    
 # "SALE DATE"  
+
+
+################################################################################
+################################################################################
+# Saving progress, for working versions, uncomment as needed
+################################################################################
+################################################################################
+save.image(file = "nycproperty_20200525.Rdata")
+
+# load on demand
+load(file = "nycproperty_20200525.Rdata")
+
