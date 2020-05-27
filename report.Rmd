@@ -20,17 +20,44 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r libraries and load data, include = FALSE}
 # libraries
 library(tidyverse)
-library(lubridate)
-library(caret)
-library(gam)
 library(ggplot2)
-library(gridExtra)
+library(caret)
+library(readr)
+library(purrr)
+library(lubridate)
 # Set to TRUE for final version, is kept at FALSE for quicker compiling
 # of drafts
 FINAL_VERSION = FALSE
 
 # load data from local repository for draft
 if(FINAL_VERSION) {
+    url <- "https://raw.githubusercontent.com/danmayen/nycproperty/master/
+    data/nyc-property-sales.zip"
+    # download file from url
+    tmp_filename <- tempfile()
+    csv_filename <- "nyc-rolling-sales.csv"
+    download.file(url, tmp_filename)
+    # unzip file
+    unzip(tmp_filename, csv_filename)
+    # remove temporary zipfile
+    file.remove(tmp_filename)
+    
+    # read csv file into data frame
+    nycproperty_raw <- read_csv(csv_filename)
+    # remove csv file
+    file.remove(csv_filename)
+    
+    # column names with underscores and lowercase
+    newcolnames <- colnames(nycproperty_raw) %>%
+        str_to_lower() %>%
+        str_replace_all(" ", "_") %>%
+        str_replace_all("-", "")
+    colnames(nycproperty_raw) <- newcolnames
+
+    # remove temporary variables
+    rm(url, tmp_filename, csv_filename, newcolnames)
+} else {
+    load(file = "data/nycproperty_raw.Rdata")
     }
 ```
 
@@ -41,10 +68,33 @@ if(FINAL_VERSION) {
 {\color{green}\underline{{\color{black}#1}}\color{black}{}}
 
 # Executive Summary
-TBD
+There are thousands of real estate property transactions in New York City every
+year. Based on the transactions of one year from
+`r format(min(nycproperty_raw$sale_date), "%d %b %Y")` to
+`r format(max(nycproperty_raw$sale_date), "%d %b %Y")`, we investigate 
+algorithms that predict sale prices based on attributes of these 
+properties.
+
+The best-performing algorithm based on the root-mean squared error of the 
+prices is
+
+with an RMSE of [TBD] ([TBD] if including deed transfers)
 
 # Introduction
-TBD
+The dataset of New York City property sales is sourced from the 
+\blueref{https://www.kaggle.com/new-york-city/nyc-property-sales}
+{Kaggle Website of NYC Property Sales}, as downloaded on 25 May 2020. The goal
+is to predict the price of a property transaction based on the 20 other
+attributes of the property that are available from the data set. The performance 
+of the model is measured by the root-mean squared error (RMSE), defined as
+\[
+RMSE(m) = \sqrt{\frac{1}{N} 
+\sum_{i=1}^N \left( \hat v_i(m) - v_i \right)^2},
+\]
+
+where $N$ is the total number of observations, $\hat v_i(m)$ is the 
+predicted sale price of property $i$ under model $m$ and $v_i$ the actual
+sale price.
 
 To do so, the data are examined and modelled in 
 \greenref{methods} which is further broken down into:
@@ -70,12 +120,125 @@ conclusions are drawn in \greenref{conclusion}.
 [TBD] modelling techniques will be described, [TBD].
 
 ## Data Structure and Loading {#methods_data_structure}
-The raw data is provided in two sets, called `edx` and `validation`.
+
+### Data Download {#methods_data_download}
+The raw data is loaded from the Github location at
+\blueref{https://github.com/danmayen/nycproperty/tree/master/data}
+{this location} with the code shown in the Appendix 
+\hyperlink{code_load_data}{\greenuline{here}}. The only minimal transformation
+applied is the change of the column names to remove hyphens ("-"), replace
+white spaces with underscores ("_") and convert them to lower case. There are
+overall `r nrow(nycproperty_raw)` data points and 21 features as well as 
+the sale price for each property.
 
 
-### Basic Data Structure
+### Split into Training Set and Test Set
+A first look at the raw data shows that the following columns can be removed:
+
+* The variable `x1` is a counter.
+* The `easement` variable only holds `NA` values.
+* Apartment numbers are too granular as an attribute.
+* Single address information is too granular as well.
+
+The related code for these facts is:
+```{r raw data facts}
+# number of different entries in x1
+length(unique(nycproperty_raw$x1))
+# number of enries of `easement` that are not NA
+sum(!is.na(nycproperty_raw$easement))
+# different apartment numbers
+length(unique(nycproperty_raw$apartment_number))
+# different addresses
+length(unique(nycproperty_raw$address))
+```
+
+Further data will not be removed as that would constitute modelling 
+hindsight, wherease discarding of the above columns does not require any
+modelling insights. With that, the data are split into a training and a test
+set:
+```{r raw data split, eval = FALSE}
+# remove columns that are of no use:
+nycproperty_raw <- nycproperty_raw %>%
+    select(-x1, -easement, -apartment_number, -address)
+
+# Test set will be 10% of overall data
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = nycproperty_raw$sale_price, 
+                                  times = 1, p = 0.1, list = FALSE)
+train_nycp <- nycproperty_raw[-test_index,]
+test_nycp <- nycproperty_raw[test_index,]
+
+# save to file for report
+save(train_nycp, test_nycp, file = "data/nycp_split.Rdata")
+
+# discard temporary variables
+rm(test_index)
+```
+
+For the purposes of this report, the data are loaded from the data file
+`nycp_split.Rdata`:
+
+```{r load raw data split}
+load(file = "data/nycp_split.Rdata")
+```
+
+
+
+
+
+### Basic Data Structure {#method_data_basic}
 [TBD: Table of head]
 
+From the overall 17 data attributes remaining, the following data properties 
+are elicited for each column:
+
+\begin{table}[htbp] \centering
+\begin{tabularx}{\textwidth}{| X | X | X |}
+    \hline
+    No. & Variable & Basic Properties \\ 
+    \hline \hline
+    1  &  borough & There are five boroughs \\ \hline
+\end{tabularx}
+\end{table}
+
+
+The details can be found subsequently in \greenref{data_basic_borough} to
+\greenref{data_basic_saledate}.
+
+#### Borough {#data_basic_borough}
+
+#### Neighbourhood
+
+#### Building Class Category
+
+#### Tax Class at Present
+
+#### Block
+
+#### Lot
+
+#### Building Class at Present
+
+#### ZIP Code
+
+#### Number of Residential Units
+
+#### Number of Commercial Units
+
+#### Total Number of Units
+
+#### Land Square Feet
+
+#### Gross Square Feet
+
+#### Year Built
+
+#### Tax Class at Time of Sale
+
+#### Building Class at Time of Sale
+
+#### Sale Date {#data_basic_saledate}
 
 [TBD: tidiness of data]
 
@@ -88,7 +251,7 @@ For better readability, the code pieces for the subsequent graphs in this Sectio
 are displayed in \hyperlink{appendix_figures}{\greenuline{Appendix A}}.
 
 
-### Data Col 1 {#data_1}
+### Borough {#data_borough}
 
 
 ### Data Col 2 {#data_2}
@@ -136,7 +299,7 @@ The **performance** of each algorithm is evaluated using the RMSE which is
 implemented in the function `RMSE_price`:
 
 ```{r RMSE function}
-RMSE_rating <- function(pred_ratings, true_ratings) {
+RMSE_price <- function(pred_ratings, true_ratings) {
     ifelse(length(pred_ratings) > 0,
            sqrt(mean((pred_ratings - true_ratings)^2)),
            NA)
@@ -183,12 +346,45 @@ overview:
 \fontsize{14}{16}\selectfont{\textbf{Appendix A - Code of Figures}}
 
 \hypertarget{appendix_figures} To enhance readibility of the report, the code
-for most figures in [Section 3.4](methods_data_exp_vis) is shown in this
-Appendix.
+for data download in [Section 3.2](methods_data_structure) and most figures in 
+[Section 3.4](methods_data_exp_vis) is shown in this Appendix.
 
 \fontsize{12}{14}\selectfont{}
-\textbf{Figures in Section 3.4.1 - General Data Distribution}
+\textbf{Data Download in Section 3.2 - Data Structure and Loading}
+\hypertarget{code_load_data}
+The code for data download in \greenref{methods_data_download}:
+```{r code load data, eval = FALSE}
+# link address
+url <- "https://raw.githubusercontent.com/danmayen/nycproperty/master/
+data/nyc-property-sales.zip"
+# download file from url
+tmp_filename <- tempfile()
+csv_filename <- "nyc-rolling-sales.csv"
+download.file(url, tmp_filename)
+# unzip file
+unzip(tmp_filename, csv_filename)
+# remove temporary zipfile
+file.remove(tmp_filename)
 
-<!-- \hypertarget{label} -->
-Code for [TBD] figure shown [TBD]:
+# read csv file into data frame
+nycproperty_raw <- read_csv(csv_filename)
+# remove csv file
+file.remove(csv_filename)
+# remove temporary variables
+rm(url, tmp_filename, csv_filename)
+
+# column names with underscores and lowercase
+newcolnames <- colnames(nycproperty_raw) %>%
+    str_to_lower() %>%
+    str_replace_all(" ", "_") %>%
+    str_replace_all("-", "")
+colnames(nycproperty_raw) <- newcolnames
+
+# save to one file for report
+save(nycproperty_raw, file = "data/nycproperty_raw.Rdata")
+
+# remove temporary variables
+rm(url, tmp_filename, csv_filename, newcolnames)
+```
+
 
