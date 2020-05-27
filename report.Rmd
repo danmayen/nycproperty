@@ -299,9 +299,9 @@ The **performance** of each algorithm is evaluated using the RMSE which is
 implemented in the function `RMSE_price`:
 
 ```{r RMSE function}
-RMSE_price <- function(pred_ratings, true_ratings) {
-    ifelse(length(pred_ratings) > 0,
-           sqrt(mean((pred_ratings - true_ratings)^2)),
+RMSE_price <- function(pred_price, actual_price) {
+    ifelse(length(pred_price) > 0,
+           sqrt(mean((pred_price - actual_price)^2)),
            NA)
     }
 ```

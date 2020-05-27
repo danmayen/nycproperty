@@ -21,15 +21,20 @@ loadLibrary <- function(libnames = c()) {
     return(TRUE)
     } 
 
+if(!require(tidyverse))install.packages("tidyverse")
+if(!require(ggplot2))install.packages("ggplot2")
+if(!require(caret))install.packages("caret")
+if(!require(readr))install.packages("readr")
+if(!require(purrr))install.packages("purrr")
+if(!require(lubridate))install.packages("lubridate")
 
 # load all needed libraries using above function
-# loadLibrary(libnames = c("tidyverse", "ggplot2", "caret", "readr"))
-library(tidyverse)
-library(ggplot2)
-library(caret)
-library(readr)
-library(purrr)
-library(lubridate)
+# library(tidyverse)
+# library(ggplot2)
+# library(caret)
+# library(readr)
+# library(purrr)
+# library(lubridate)
 
 ################################################################################
 # 3.2 Data Structure and Loading
@@ -124,6 +129,10 @@ df_format <- function(df, nfirstvalues = 5, sep = " ") {
 # 3.2.3.1 Borough
 train_nycp %>% count(borough)
 
+# 3.2.3.18 Sale price
+map(c(0,10^seq(0,3)), function(x) mean(train_nycp$sale_price <= x))
+# -> so only 2/3 of data have a positive price!
+
 
 ################################################################################
 # 3.3 Data cleaning
@@ -135,6 +144,21 @@ train_nycp <- train_nycp %>%
 test_nycp <- test_nycp %>%
     mutate(borough = factor(borough))
 
+# 3.3.12 Land Square feet
+train_nycp <- train_nycp %>%
+    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
+    mutate(land_square_feet_num = parse_number(land_square_feet))
+test_nycp <- test_nycp %>%
+    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
+    mutate(land_square_feet_num = parse_number(land_square_feet))
+
+# 3.3.13 Gross Square feet
+test_nycp <- test_nycp %>%
+    mutate(gross_square_feet = str_replace_all(gross_square_feet, "-", "0")) %>%
+    mutate(gross_square_feet_num = parse_number(gross_square_feet))
+
+# 3.3.xx Net square feet
+
 # 3.3.x Convert sale prices to number
 train_nycp <- train_nycp %>%
     mutate(sale_price = str_replace_all(sale_price,"-", "0")) %>%
@@ -143,16 +167,143 @@ test_nycp <- test_nycp %>%
     mutate(sale_price = str_replace_all(sale_price,"-", "0")) %>%
     mutate(sale_price = parse_number(sale_price))
 
+# then filter out sale prices at or below $1,000
+train_nycp <- train_nycp %>%
+    filter(sale_price > 1000)
+# same for test data
+test_nycp <- test_nycp %>%
+    filter(sale_price > 1000)
+
+# PRICE per Square Foot! 
+## check availablity first
+train_nycp %>%
+    mutate(land_square_feet_available = (land_square_feet_num >=10),
+           gross_square_feet_available = (gross_square_feet_num >= 10),
+           sale_price_available = (sale_price > 10000)) %>%
+    group_by(sale_price_available,
+             land_square_feet_available,
+             gross_square_feet_available) %>% count()
+
+# Ideas to try:
+# (1) Fill data for net square feet by:
+# - percentage net/gross overall
+# - percentage neg/gross by building class at TOS
+# - percentage net/gross by building class at TOS and at present
+# (2) Use these data to calculate sale_price per net_sq_ft
+
+################################################################################
+# 3.4.1 General prices
+################################################################################
+
+
 ################################################################################
 # 3.4.2 Borough
 ################################################################################
 
+# strip out average!
+mu <- mean(train_nycp$sale_price)
+
 # plot distribution of sale price by borough
 train_nycp %>%
-    filter(sale_price > 0) %>%
-    ggplot(aes(x = borough, y = sale_price)) +
+    ggplot(aes(x = borough, y = sale_price - mu)) +
+    scale_y_log10() +
+    geom_boxplot() +
+    geom_jitter(width = 0.2, alpha = 0.01)
+# -> in particular borough 2 has lower prices
+# -> in general, prices below $10,000 are outliers, as are prices
+#    above $1,000,000
+mean(train_nycp$sale_price > 0)
+
+################################################################################
+# 3.4.16 Building Class at Time of Sale
+################################################################################
+
+# distribution by building class, R, A, B, D, C and rest
+train_nycp %>%
+    mutate(building_class_tos_clustered = 
+               ifelse(str_sub(building_class_at_time_of_sale,1,1) %in% 
+                          c("R", "A", "B", "D", "C"),
+                      str_sub(building_class_at_time_of_sale,1,1), "Other")) %>%
+    mutate(building_class_tos_clustered = 
+               reorder(building_class_tos_clustered, sale_price, median)) %>%
+    ggplot(aes(x = factor(building_class_tos_clustered),
+               y = sale_price)) +
     scale_y_log10() +
     geom_boxplot()
+
+################################################################################
+# 3.5 Modelling
+################################################################################
+# RMSE function
+RMSE_price <- function(pred_price, actual_price) {
+    ifelse(length(pred_price) > 0,
+           sqrt(mean((pred_price - actual_price)^2)),
+           NA)
+    }
+
+# other RMSE function
+RMSE_price <- function(pred_price, actual_price) 
+    mean(abs(pred_price - actual_price))
+
+################################################################################
+# 3.5.1 simple stats - average and median
+################################################################################
+
+mu <- mean(train_nycp$sale_price)
+med <- median(train_nycp$sale_price)
+
+# model to predict average
+predict_const_avg <- function(newdata) mean(train_nycp$sale_price)
+
+# predict prices
+price_hat_avg <- predict_const_avg(test_nycp)
+# calculate RMSE and store in results table
+rmse_const_avg <- RMSE_price(price_hat_avg, test_nycp$sale_price)
+
+# model to predict median
+predict_const_med <- function(newdata) median(train_nycp$sale_price)
+
+# predict prices
+price_hat_med <- predict_const_med(test_nycp)
+# calculate RMSE and store in results table
+rmse_const_med <- RMSE_price(price_hat_med, test_nycp$sale_price)
+
+
+################################################################################
+# 3.5.2 Models based on borough only
+################################################################################
+
+set.seed(351, sample.kind = "Rounding")
+train_nycp_1000 <- sample_n(train_nycp, size = 1000)
+
+# there are only 5 boroughs so k = 1, 3 will do
+cvControl <- trainControl(method = "cv", number = 10, p = 0.9)
+train_borough <- train(sale_price ~ borough, data = train_nycp, 
+                       method = "knn",
+                       tuneGrid = data.frame(k = seq(1, 3, 2)))
+ggplot(train_borough, highlight = TRUE)
+
+# simply use average of each borough as predictor
+predict_ba <- function(newdata) {
+    mu <- mean(train_nycp$sale_price)
+    b_b_tbl <- train_nycp %>% group_by(borough) %>%
+        summarise(b_b = mean(sale_price - mu))
+    pred_price <- newdata %>%
+        left_join(b_b_tbl, by = "borough") %>%
+        mutate(price_hat = mu + b_b) %>% .$price_hat
+    }
+
+# TODO: write function that uses kNN
+
+# predict prices, with total data
+price_hat_bk <- predict(train_borough, newdata = test_nycp)
+# calculate RMSE and store in results table
+rmse_bk <- RMSE_price(price_hat_bk, test_nycp$sale_price)
+
+# predict prices, with class average
+price_hat_ba <- predict_ba(test_nycp)
+# calculate RMSE and store in results table
+rmse_ba <- RMSE_price(price_hat_ba, test_nycp$sale_price)
 
 
 ################################################################################
@@ -459,8 +610,10 @@ format(min(nycproperty_raw$sale_date), "%d %b %Y")
 # Saving progress, for working versions, uncomment as needed
 ################################################################################
 ################################################################################
+
+# save on demand
 save.image(file = "nycproperty_20200527.Rdata")
 
 # load on demand
-#load(file = "nycproperty_20200525.Rdata")
+load(file = "nycproperty_20200527.Rdata")
 
