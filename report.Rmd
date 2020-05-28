@@ -190,21 +190,38 @@ load(file = "data/nycp_split.Rdata")
 ### Basic Data Structure {#method_data_basic}
 [TBD: Table of head]
 
-From the overall 17 data attributes remaining, the following data properties 
-are elicited for each column:
+From the overall 17 data attributes and one result remaining, the following data
+properties are elicited for each column:
 
 \begin{table}[htbp] \centering
 \begin{tabularx}{\textwidth}{| X | X | X |}
     \hline
     No. & Variable & Basic Properties \\ 
     \hline \hline
-    1  &  borough & There are five boroughs \\ \hline
+    1  &  \texttt{borough} & There are five boroughs \\ \hline
+    2  &  \texttt{neighborhood} & TBD Property \\ \hline
+    3  &  \texttt{building\_class\_category} & TBD property \\ \hline
+    4  &  \texttt{tax\_class\_at\_present} & TBD Property \\ \hline 
+    5  &  \texttt{block} & TBD Property \\ \hline 
+    6  &  \texttt{lot} & TBD Property \\ \hline 
+    7  &  \texttt{building\_class\_at\_present} & TBD Property \\ \hline 
+    8  &  \texttt{zip\_code} & TBD Property \\ \hline 
+    9  &  \texttt{residential\_units} & TBD Property \\ \hline 
+    10  &  \texttt{commercial\_units} & TBD Property \\ \hline 
+    11  &  \texttt{total\_units} & TBD Property \\ \hline 
+    12  &  \texttt{land\_square\_feet} & TBD Property \\ \hline 
+    13  &  \texttt{gross\_square\_feet} & TBD Property \\ \hline 
+    14  &  \texttt{year\_built} & TBD Property \\ \hline 
+    15  &  \texttt{tax\_class\_at\_time\_of\_sale} & TBD Property \\ \hline 
+    16  &  \texttt{building\_class\_at\_time\_of\_sale} & TBD Property \\ \hline 
+    17  &  \texttt{sale\_date} & Date between TBD and TBD \\ \hline 
+    18  &  \texttt{sale\_price} & TBD Property \\ \hline 
 \end{tabularx}
 \end{table}
 
 
 The details can be found subsequently in \greenref{data_basic_borough} to
-\greenref{data_basic_saledate}.
+\greenref{data_basic_saleprice}.
 
 #### Borough {#data_basic_borough}
 
@@ -240,9 +257,15 @@ The details can be found subsequently in \greenref{data_basic_borough} to
 
 #### Sale Date {#data_basic_saledate}
 
+#### Sale Price {#data_basic_saleprice}
+
 [TBD: tidiness of data]
 
 ## Data Cleaning {#methods_data_cleaning}
+
+The data cleaning is summarised in the table below
+
+Further details can be found in [TBD] - [TBD].
 
 ## Data Exploration and Visualisation {#methods_data_exp_vis}
 
