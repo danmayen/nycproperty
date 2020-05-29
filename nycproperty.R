@@ -40,7 +40,7 @@ if(!require(gam))install.packages("gam")
 # library(lubridate)
 
 ################################################################################
-# 0.3 Auxiliary Functions
+# 0.3 Auxiliary Functionss
 ################################################################################
 #' Returns data frame with format of a given data frame
 #' 
@@ -70,16 +70,6 @@ df_format <- function(df, nfirstvalues = 5, sep = " ") {
 #' @return List of data frames named `train` and `test` containing the
 #'         training set augmented by values previous in (temporary) test set
 #'         but not in training set. 
-# -> apply augmentation function to transfer these few rows from test set
-#    to training set
-df_temp <- augment_train_by_test(train_nycp, test_nycp, 
-                                 column = "building_class_category")
-train_nycp <- df_temp$train
-test_nycp <- df_temp$test
-# double-check condition
-test_nycp %>% anti_join(train_nycp, by = "building_class_category") %>% nrow()
-# discard temporary set
-rm(df_temp)
 augment_train_by_test <- function(train, temp_test, column) {
     # checking condition
     nrows_before <- nrow(train) + nrow(temp_test)
@@ -100,6 +90,10 @@ augment_train_by_test <- function(train, temp_test, column) {
     list(train = train, test = test)
     }
 
+#' Harmonic mean
+#' @param x Vector to calculate harmonic mean of
+#' @return Harmonic mean of x
+harm.mean <- function(x) 1/mean(1/x)
 
 ################################################################################
 # 3.2 Data Structure and Loading
@@ -151,8 +145,8 @@ nycproperty_raw <- nycproperty_raw %>%
     select(-x1, -easement, -apartment_number, -address)
 
 # Test set will be 10% of overall data
-set.seed(1, sample.kind="Rounding")
 # if using R 3.5 or earlier, use `set.seed(1)` instead
+set.seed(1, sample.kind="Rounding")
 test_index <- createDataPartition(y = nycproperty_raw$sale_price, 
                                   times = 1, p = 0.1, list = FALSE)
 train_nycp <- nycproperty_raw[-test_index,]
@@ -299,21 +293,36 @@ test_nycp %>%
 # be an erroneous value and therefore, is removed from test set.
 test_nycp <- test_nycp %>%
     filter(year_built == 0 | year_built > 1500)
-# remove decade_built from training set again
+# remove decade_built column from training set again
 train_nycp <- select(train_nycp, -decade_built)
 
 # 15. Tax Class at Time of Sale
 test_nycp %>% anti_join(train_nycp, by = "tax_class_at_time_of_sale") %>% nrow()
 # -> OK
 
-# 16. Building Class at Time of Sale
-test_nycp %>% anti_join(train_nycp, by = "building_class_at_time_of_sale") %>% nrow()
-# -> OK
+# 16. Building Class at Time of Sale, in combination with borough
+test_nycp %>% anti_join(train_nycp,
+                        by = c("borough", "building_class_at_time_of_sale")) %>% 
+    nrow()
+# -> 27 rows, apply augmentation function
 
+df_temp <- 
+    augment_train_by_test(
+        train_nycp, test_nycp, 
+        column = c("borough", "building_class_at_time_of_sale"))
+train_nycp <- df_temp$train
+test_nycp <- df_temp$test
+# double-check condition
+test_nycp %>% 
+    anti_join(train_nycp, 
+              by =  c("borough", "building_class_at_time_of_sale")) %>% nrow()
+# discard temporary set
+rm(df_temp)
 
 #####################################
 ## discard temporary variables
 rm(test_index)
+save(train_nycp, test_nycp, file = "data/nycp_split_clean.Rdata")
 
 
 ################################################################################
@@ -337,11 +346,75 @@ plot(tbl_price_below, log = "x")
 # 3.3 Data cleaning
 ################################################################################
 
-# 3.3.0 Sample of sale price
+
+
+
+# 3.3.1 Convert borough into factor
+train_nycp <- train_nycp %>%
+    mutate(borough = factor(borough))
+test_nycp <- test_nycp %>%
+    mutate(borough = factor(borough))
+
+# 3.3.2 Neighbourhood
+# any NAs?
+sum(is.na(train_nycp$neighborhood))
+# -> no NAs
+
+# determine distinct values
+length(unique(train_nycp$neighborhood))
+# -> 253 different neighbourhoods, quite granular, leave for now
+
+# 3.3.3 Building Class Category, simply convert to factor
+train_nycp <- train_nycp %>%
+    mutate(building_class_category = factor(building_class_category)) %>%
+    mutate(building_class_at_present = 
+               reorder(building_class_category, sale_price, log10mean))
+test_nycp <- test_nycp %>%
+    mutate(building_class_category = 
+               factor(building_class_category,
+                      levels = levels(train_nycp$building_class_category)))
+
+# 3.3.4 ZIP code, convert to factor
+train_nycp <- train_nycp %>%
+    mutate(zip_code = factor(zip_code)) %>%
+    mutate(zip_code = reorder(zip_code, sale_price, log10mean))
+test_nycp <- test_nycp %>%
+    mutate(zip_code = factor(zip_code,
+                             levels = levels(train_nycp$zip_code)))
+
+# 3.3.12 Land Square feet
+train_nycp <- train_nycp %>%
+    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
+    mutate(land_square_feet = parse_number(land_square_feet))
+test_nycp <- test_nycp %>%
+    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
+    mutate(land_square_feet = parse_number(land_square_feet))
+
+# 3.3.13 Gross Square feet
+train_nycp <- train_nycp %>%
+    mutate(gross_square_feet = str_replace_all(gross_square_feet, "-", "0")) %>%
+    mutate(gross_square_feet = parse_number(gross_square_feet))
+test_nycp <- test_nycp %>%
+    mutate(gross_square_feet = str_replace_all(gross_square_feet, "-", "0")) %>%
+    mutate(gross_square_feet = parse_number(gross_square_feet))
+
+# 3.3.14 year built -> get decade
+train_nycp <- train_nycp %>%
+    mutate(decade_built = floor(year_built/10)*10)
+test_nycp <- test_nycp %>%
+    mutate(decade_built = floor(year_built/10)*10)
+
+# 3.3.17 sale date -> get sale month
+train_nycp <- train_nycp %>%
+    mutate(sale_month = month(sale_date))
+test_nycp <- test_nycp %>%
+    mutate(sale_month = month(sale_date))
+
+# 3.3.18 Sale price
 set.seed(330, sample.kind = "Rounding")
 sample(train_nycp$sale_price, size = 100)
-# -> convert "-" to "0" and parse as number
 
+# -> convert "-" to "0" and parse as number
 train_nycp <- train_nycp %>%
     mutate(sale_price = str_replace_all(sale_price,"-", "0")) %>%
     mutate(sale_price = parse_number(sale_price))
@@ -400,14 +473,14 @@ p1 <- train_nycp %>%
     geom_hline(yintercept = mu_trf, size = 1, col = "blue",
                linetype = "dashed") +
     geom_hline(yintercept = mu_smp, size = 1, col = "red",
-           linetype = "dashed")
+               linetype = "dashed")
 p2 <- train_nycp %>%
     filter(between(sale_price, sale_price_lo, sale_price_hi)) %>%
     ggplot(aes(x = sale_price)) +
     scale_x_log10() +
     geom_histogram(bins = 50, col = "black") +
     geom_vline(xintercept = mu_trf, size = 1, col = "blue",
-           linetype = "dashed") +
+               linetype = "dashed") +
     geom_vline(xintercept = c(mu_trf, mu_trf), size = 1, col = "blue",
                linetype = "dashed") +
     geom_vline(xintercept = mu_smp, size = 1, col = "red",
@@ -429,57 +502,6 @@ train_nycp <- train_nycp %>%
 # same for test data
 test_nycp <- test_nycp %>%
     filter(sale_price > 1000)
-
-nrow(train_nycp)/nrow(test_nycp)
-
-# 3.3.1 Convert borough into factor
-train_nycp <- train_nycp %>%
-    mutate(borough = factor(borough))
-test_nycp <- test_nycp %>%
-    mutate(borough = factor(borough))
-
-# 3.3.2 Neighbourhood
-# any NAs?
-sum(is.na(train_nycp$neighborhood))
-# -> no NAs
-
-# 3.3.3 Building Class Category, WOKK IN PROGRESS
-# tabulate distinct building classes by str and num
-nycp_bcat_tab <- train_nycp %>%
-    group_by(building_class_category) %>%
-    summarise(cat_n = n(),
-              cat_mean_price = mean(sale_price),
-              cat_sd_price = sd(sale_price))
-
-# strip out first two character, convert to number
-train_nycp %>%
-    mutate(building_class_cat_num = 
-               parse_number(str_sub(building_class_category,1,2))) %>%
-    count(building_class_cat_num) %>%
-    arrange(desc(n)) %>%
-    mutate(cumper = cumsum(n/sum(n))) %>%
-    print(n = 43)
-
-# determine distinct values
-length(unique(train_nycp$neighborhood))
-# -> 253 different neighbourhoods, quite granular, leave for now
-
-# 3.3.12 Land Square feet
-train_nycp <- train_nycp %>%
-    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
-    mutate(land_square_feet = parse_number(land_square_feet))
-test_nycp <- test_nycp %>%
-    mutate(land_square_feet = str_replace_all(land_square_feet, "-", "0")) %>%
-    mutate(land_square_feet = parse_number(land_square_feet))
-
-# 3.3.13 Gross Square feet
-train_nycp <- train_nycp %>%
-    mutate(gross_square_feet = str_replace_all(gross_square_feet, "-", "0")) %>%
-    mutate(gross_square_feet = parse_number(gross_square_feet))
-test_nycp <- test_nycp %>%
-    mutate(gross_square_feet = str_replace_all(gross_square_feet, "-", "0")) %>%
-    mutate(gross_square_feet = parse_number(gross_square_feet))
-
 # 3.3.xx Net square feet
 # overall distribution
 train_nycp %>%
@@ -633,8 +655,6 @@ coop_lookup %>%
 # -> that also makes the choice from above, so only use gross footage
 #    and not net footage for now
 
-
-
 # To decide, take the correct 6k rows and plot them against number
 # of units, all resi, commercial and total
 # For NET square footage
@@ -729,8 +749,6 @@ train_nycp %>%
     mutate(cumper = cumsum(n/sum(n))) %>% .$n %>% sum()
 # -> overall 31 combinations, making up 1,140 entries
 
-# 3.3.x Convert sale prices to number
-
 # PRICE per Square Foot! 
 ## check availablity first
 train_nycp %>%
@@ -741,12 +759,28 @@ train_nycp %>%
              land_square_feet_available,
              gross_square_feet_available) %>% count()
 
-# Ideas to try:
-# (1) Fill data for net square feet by:
-# - percentage net/gross overall
-# - percentage net/gross by building class at TOS
-# - percentage net/gross by building class at TOS and at present
-# (2) Use these data to calculate sale_price per net_sq_ft
+# 3.3.xx Check if any (borough, bc at TOS) combons in test not in train set
+test_nycp %>% anti_join(train_nycp,
+                        by = c("borough", "building_class_at_time_of_sale")) %>% 
+    nrow()
+# -> 33 rows, apply augmentation function
+
+df_temp <- 
+    augment_train_by_test(
+        train_nycp, test_nycp, 
+        column = c("borough", "building_class_at_time_of_sale"))
+train_nycp <- df_temp$train
+test_nycp <- df_temp$test
+# double-check condition
+test_nycp %>% 
+    anti_join(train_nycp, 
+              by =  c("borough", "building_class_at_time_of_sale")) %>% nrow()
+# discard temporary set
+rm(df_temp)
+
+
+# save to file for report
+save(train_nycp, test_nycp, file = "data/nycp_split_trans.Rdata")
 
 ################################################################################
 # 3.4.1 General prices
@@ -889,146 +923,534 @@ rmse_bm <- RMSE_price(price_hat_bm, test_nycp$sale_price)
 # 3.5.3 Models based on price per square foot (gross)
 ################################################################################
 
-# Step 1: Calculate sale price per gross square foot
+# Generate list of training and test sets from "edx" for k-fold cross-validation
+# Use function createFolds with k = 25 
+set.seed(342, sample.kind = "Rounding")
+index_list <- createFolds(train_nycp$sale_price, k = 25)
+
+
+################################################################################
+# 3.5.3.1 Square footage directly available
+################################################################################
+
+# Step 1: Calculate sale price per gross square foot,
+#         using different types of averages
+
+# Decide which of the averages is taken by k-fold cross-validation
+rmse_v_L1 <- map_df(1:length(index_list), function (listIdx) {
+    # split data into training and test set
+    train_set <- train_nycp[-index_list[[listIdx]], ]
+    test_set <- train_nycp[index_list[[listIdx]], ]
+    
+    ppgsf_L1_tbl <- train_set %>%
+        select(borough, building_class_at_time_of_sale,
+           gross_square_feet, sale_price) %>%
+        filter(gross_square_feet >= 10) %>%
+        group_by(borough, building_class_at_time_of_sale) %>%
+        summarise(nprices = n(),
+                  price_per_gsf = sum(sale_price) / sum(gross_square_feet),
+                  price_per_gsf_w = log10mean(sale_price) / 
+                      log10mean(gross_square_feet),
+                  price_per_gsf_med = median(sale_price/gross_square_feet),
+                  price_per_gsf_harm = harm.mean(sale_price/gross_square_feet))
+    
+    predictions <- test_set %>%
+        filter(gross_square_feet >= 10) %>%
+        inner_join(ppgsf_L1_tbl, 
+                   by = c("borough", "building_class_at_time_of_sale")) %>%
+        mutate(sale_price_hat = gross_square_feet * price_per_gsf,
+               sale_price_hat_w = gross_square_feet * price_per_gsf_w,
+               sale_price_hat_med = gross_square_feet * price_per_gsf_med,
+               sale_price_hat_harm = gross_square_feet * price_per_gsf_harm) %>%
+        mutate(perdiff = (sale_price_hat/sale_price - 1),
+               perdiff_w = (sale_price_hat_w/sale_price - 1),
+               perdiff_med = (sale_price_hat_med/sale_price - 1),
+               perdiff_harm = (sale_price_hat_harm/sale_price - 1))
+    predictions %>%
+        summarise(RMSE_avg = mean(perdiff),
+                  RMSE_avg_w = mean(perdiff_w),
+                  RMSE_avg_med = mean(perdiff_med),
+                  RMSE_avg_harm = mean(perdiff_harm),
+                  RMSE_med = median(perdiff),
+                  RMSE_med_w = median(perdiff_w),
+                  RMSE_med_med = median(perdiff_med),
+                  RMSE_med_harm = median(perdiff_harm))
+    })
+rm(train_set, test_set, ppgsf_L1_tbl, predictions)
+
+rmse_v_L1 %>% summarise_all(mean)
+rmse_v_L1 %>% summarise_all(sd)
+
+# STEP 1 DECISION:
+#-> take the HARMONIC MEAN to calculate price / gross sq ft
 price_gsf_L1_tbl <- train_nycp %>%
     select(borough, building_class_at_time_of_sale,
            gross_square_feet, sale_price) %>%
     filter(gross_square_feet >= 10) %>%
     group_by(borough, building_class_at_time_of_sale) %>%
     summarise(nprices = n(),
-              price_per_gsf = sum(sale_price)/sum(gross_square_feet))
+              price_per_gsf_harm = harm.mean(sale_price/gross_square_feet))
 
-# check in-sample fit;
-# TBD: REMOVE IN FINAL VERSION
-train_nycp %>%
-    filter(gross_square_feet >= 10) %>%
-    left_join(price_gsf_L1_tbl, by = c("borough",
-                                       "building_class_at_time_of_sale")) %>%
-    mutate(sale_price_hat = gross_square_feet * price_per_gsf) %>%
-    mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
-    select(borough, building_class_at_time_of_sale, sale_price,
-           sale_price_hat, perdiff) %>% 
-    summarise(RMSE = median(perdiff))
-
-# check out-of-sample fit; 
-# TBD: REMOVE IN FINAL VERSION
-test_nycp %>%
-    filter(gross_square_feet >= 10) %>%
-    inner_join(price_gsf_L1_tbl, by = c("borough",
-                                       "building_class_at_time_of_sale")) %>%
-    mutate(sale_price_hat = gross_square_feet * price_per_gsf) %>%
-    mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
-    select(borough, building_class_at_time_of_sale, sale_price,
-           sale_price_hat, perdiff) %>%
-    summarise(RMSE = median(perdiff))
+################################################################################
+# 3.5.3.2 Square footage not available, but approximated by #total_units
+################################################################################
 
 # Step 2: Determine borough/building class at TOS combinations for
 #         which total_units > 0 and gross ft^2 < 10
 #         For these, approximate gross square footage by LOESS
-bbc_L2_tbl <- train_nycp %>%
+bbc_L1_inc_tbl <- train_nycp %>%
     filter(gross_square_feet < 10 & total_units > 0) %>%
     distinct(borough, building_class_at_time_of_sale)
 
 # need the data for which both gross ft^2 and total units are
 # available for LOESS
-train_nycp_bbc_L2 <- train_nycp %>%
-    semi_join(bbc_L2_tbl, by = c("borough",
-                                 "building_class_at_time_of_sale"))
+train_nycp_bbc_L1_inc <- train_nycp %>%
+    semi_join(bbc_L1_inc_tbl, by = c("borough",
+                                     "building_class_at_time_of_sale")) %>%
+    filter(gross_square_feet >= 10 & total_units > 0)
+
+# check again the relation between gross ft^2 and #total units
+train_nycp_bbc_L1_inc %>%
+    ggplot(aes(x = total_units)) +
+    scale_x_log10() +
+    scale_y_log10() +
+    geom_point(aes(y = gross_square_feet))
 
 # check model parameters for LOESS
 modelLookup("gamLoess")
 # -> can tune span, degree = 1 is fine
 
-# LOESS, with span (ABSOLUTE) = 5 seems ok
-# TBD: remove for final version
-fit_loess_bbc_L2 <- loess(gross_square_feet ~ total_units,
-                          data = train_nycp_bbc_L2,
-                          span = 5)
-train_nycp_bbc_L2 %>%
-    mutate(gsf_fitted = fit_loess_bbc_L2$fitted) %>%
-    ggplot(aes(x = total_units)) +
-    scale_x_log10() +
-    scale_y_log10() +
-    geom_point(aes(y = gross_square_feet)) +
-    geom_line(aes(y = gsf_fitted), col = "blue")
-
-
 # train LOESS model
-train_bbc_L2 <- train(gross_square_feet ~ total_units,
-                      data = train_nycp_bbc_L2, 
-                      method = "gamLoess",
-                      tuneGrid = data.frame(degree = 1,
-                                            span = seq(0.10, 0.70, 0.1)))
-ggplot(train_bbc_L2, highlight = TRUE)
+train_bbc_L1_inc <- train(gross_square_feet ~ total_units,
+                          data = train_nycp_bbc_L1_inc,
+                          method = "gamLoess",
+                          tuneGrid = data.frame(degree = 1,
+                                                span = seq(0.10, 0.70, 0.1)))
+ggplot(train_bbc_L1_inc, highlight = TRUE)
+train_bbc_L1_inc$bestTune
+
+# DECISION 2: Use LOESS with span = 0.7
 
 # plot fit
-train_nycp_bbc_L2 %>%
-    mutate(gsf_fitted = predict(train_bbc_L2, newdata = .)) %>%
+train_nycp_bbc_L1_inc %>%
+    mutate(gsf_fitted = predict(train_bbc_L1_inc, newdata = .)) %>%
     ggplot(aes(x = total_units)) +
     scale_x_log10() +
     scale_y_log10() +
     geom_point(aes(y = gross_square_feet)) +
     geom_line(aes(y = gsf_fitted), col = "blue")
 
-# Take data wiith total units > 0 and gross_square_feet < 10 to
+
+# Wrap-up activities for Step 2
+# Take data with total units > 0 and gross_square_feet < 10 to
 # a) put in proxy for gross square feet
 # b) use that proxy to predict price/ft^2
 price_gsf_L1_tbl_inc <- train_nycp %>%
     filter(gross_square_feet < 10 & total_units > 0) %>%
-    mutate(gross_square_feet_hat = predict(train_bbc_L2, newdata = .)) %>%
+    mutate(gross_square_feet_hat = predict(train_bbc_L1_inc, newdata = .)) %>%
     group_by(borough, building_class_at_time_of_sale) %>%
     summarise(nprices = n(),
-              price_per_gsf = sum(sale_price)/sum(gross_square_feet_hat))
+              price_per_gsf_harm = harm.mean(sale_price/gross_square_feet_hat))
 
-# only keep (borough, bc at TOS) combos NOT in price_gsf_L1_tbl already
+# only keep (borough, bldg class at TOS) combos
+# that are NOT already in price_gsf_L1_tbl
 price_gsf_L1_tbl_inc <- price_gsf_L1_tbl_inc %>%
     anti_join(price_gsf_L1_tbl, by = c("borough",
                                        "building_class_at_time_of_sale"))
 
-# check that no overlaps
-price_gsf_L1_tbl %>% 
+# check that no overlaps, should yield zero rows
+price_gsf_L1_tbl %>%
     semi_join(price_gsf_L1_tbl_inc, by = c("borough",
-                                           "building_class_at_time_of_sale"))    
+                                           "building_class_at_time_of_sale"))
 
 # and get new table
 price_gsf_L2_tbl <- rbind(price_gsf_L1_tbl,
                           price_gsf_L1_tbl_inc)
+# # check in-sample fit;
+# # TBD: REMOVE IN FINAL VERSION, REPLACE WITH k-fold cross-validation
+# train_nycp %>%
+#     filter(gross_square_feet >= 10 | total_units > 0) %>%
+#     left_join(price_gsf_L2_tbl, by = c("borough",
+#                                        "building_class_at_time_of_sale")) %>%
+#     mutate(gross_square_feet = ifelse(gross_square_feet >= 10,
+#                                       gross_square_feet,
+#                                       predict(train_bbc_L1_inc, newdata = .))) %>%
+#     mutate(sale_price_hat = gross_square_feet * price_per_gsf_harm) %>%
+#     mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
+#     select(borough, building_class_at_time_of_sale, gross_square_feet,
+#            sale_price, sale_price_hat, perdiff) %>% 
+#     filter(!between(perdiff, -2, 2)) %>%
+#     filter(building_class_at_time_of_sale %in%
+#                c("A1",  "A5", "A9", "B2", "B3", "B9", "C0", "C3")) %>%
+#     ggplot(aes(x = perdiff)) +
+#     geom_histogram(bins = 40, col = "black") +
+#     facet_grid(borough ~ building_class_at_time_of_sale, scale = "free")
+# # -> most extreme differences are in A5, B9, C0, B2 
+# 
+# # investigate these
+# largest_L2_diffs <- train_nycp %>%
+#     filter(gross_square_feet >= 10 | total_units > 0) %>%
+#     left_join(price_gsf_L2_tbl, by = c("borough",
+#                                        "building_class_at_time_of_sale")) %>%
+#     mutate(gsf_hat = ifelse(gross_square_feet >= 10,
+#                              gross_square_feet,
+#                              predict(train_bbc_L1_inc, newdata = .))) %>%
+#     mutate(sale_price_hat = gsf_hat * price_per_gsf_harm) %>%
+#     mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
+#     select(borough, building_class_at_time_of_sale, 
+#            gross_square_feet, gsf_hat,
+#            sale_price, sale_price_hat, perdiff) %>% 
+#     filter(!between(perdiff, -2, 2)) %>%
+#     filter(building_class_at_time_of_sale %in%
+#                c("A1",  "A5", "A9", "B2", "B3", "B9", "C0", "C3")) %>%
+#     arrange(desc(abs(perdiff)))
+# # -> large differences come from properties with small sale prices
+# 
+# #    see more clearly on this plot
+# largest_L2_diffs %>%
+#     ggplot(aes(x = sale_price, y = perdiff)) +
+#     scale_x_log10() +
+#     scale_y_log10() +
+#     geom_point()
+# 
+#     
+# # check out-of-sample fit; 
+# # TBD: REMOVE IN FINAL VERSION
+# test_nycp %>%
+#     filter(gross_square_feet >= 10 | total_units > 0) %>%
+#     inner_join(price_gsf_L2_tbl, by = c("borough",
+#                                         "building_class_at_time_of_sale")) %>%
+#     mutate(gross_square_feet = ifelse(gross_square_feet >= 10,
+#                                       gross_square_feet,
+#                                       predict(train_bbc_L1_inc, newdata = .))) %>%
+#     mutate(sale_price_hat =  gross_square_feet * price_per_gsf_harm) %>%
+#     mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
+#     select(borough, building_class_at_time_of_sale, sale_price,
+#            sale_price_hat, perdiff) %>% 
+#     summarise(RMSE_avg = mean(perdiff),
+#               RMSE_med = median(perdiff))
 
-
-# check in-sample fit;
-# TBD: REMOVE IN FINAL VERSION
-train_nycp %>%
-    filter(gross_square_feet >= 10 | total_units > 0) %>%
-    left_join(price_gsf_L2_tbl, by = c("borough",
-                                       "building_class_at_time_of_sale")) %>%
-    mutate(gross_square_feet = ifelse(gross_square_feet >= 10,
-                                      gross_square_feet,
-                                      predict(train_bbc_L2, newdata = .))) %>%
-    mutate(sale_price_hat = gross_square_feet * price_per_gsf) %>%
-    mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
-    select(borough, building_class_at_time_of_sale, gross_square_feet,
-           sale_price, sale_price_hat, perdiff) %>% 
-    summarise(RMSE = median(perdiff))
-
-# check out-of-sample fit; 
-# TBD: REMOVE IN FINAL VERSION
-test_nycp %>%
-    filter(gross_square_feet >= 10 | total_units > 0) %>%
-    inner_join(price_gsf_L2_tbl, by = c("borough",
-                                        "building_class_at_time_of_sale")) %>%
-    mutate(gross_square_feet = ifelse(gross_square_feet >= 10,
-                                      gross_square_feet,
-                                      predict(train_bbc_L2, newdata = .))) %>%
-    mutate(sale_price_hat = gross_square_feet * price_per_gsf) %>%
-    mutate(perdiff = (sale_price_hat/sale_price - 1)) %>%
-    select(borough, building_class_at_time_of_sale, sale_price,
-           sale_price_hat, perdiff) %>%
-    summarise(RMSE = median(perdiff))
+################################################################################
+# 3.5.3.3 Neither square footage available (<10) nor total_units (==0)
+################################################################################
 
 # Step 3: Determine borough/building class at TOS combinations for
-#         which total_units == 0 and gross ft^2 < 10
+#         which gross ft^2 < 10 and total_units == 0 
 #         For these, approximate price by median price
 #         of borough/building class combination
+train_nycp %>%
+    anti_join(price_gsf_L2_tbl, by = c("borough",
+                                     "building_class_at_time_of_sale")) %>%
+    count(borough, building_class_at_time_of_sale) %>% 
+    arrange(desc(n)) %>% print(n = 100)
+
+# compile table of borough / bldg class at TOS for Step 3
+bbc_L2_inc_tbl <- train_nycp %>%
+    count(borough, building_class_at_time_of_sale)
+
+# ensure that combos from test set also covered
+bbc_L2_inc_tbl_add <- test_nycp %>%
+    count(borough, building_class_at_time_of_sale)
+
+# merge the two tables
+bbc_L3_tbl <- full_join(bbc_L2_inc_tbl, bbc_L2_inc_tbl_add,
+                  by = c("borough", "building_class_at_time_of_sale"))
+rm(bbc_L2_inc_tbl, bbc_L2_inc_tbl_add)
+
+# check if now: 
+# (1) contains combos from train set that are not in price_gsf_L2_tbl
+#    -> should return empty set
+# (2) contains combos from test set that are not in price_gsf_L2_tbl
+#    -> should return empty set
+train_nycp %>%
+    select(borough, building_class_at_time_of_sale) %>%
+    anti_join(price_gsf_L2_tbl, by = c("borough",
+                                       "building_class_at_time_of_sale")) %>%
+    anti_join(bbc_L3_tbl, by = c("borough",
+                                       "building_class_at_time_of_sale"))
+test_nycp %>%
+    select(borough, building_class_at_time_of_sale) %>%
+    anti_join(price_gsf_L2_tbl, by = c("borough",
+                                       "building_class_at_time_of_sale")) %>%
+    anti_join(bbc_L3_tbl, by = c("borough","building_class_at_time_of_sale"))
+# That all checks out, so can move on
+
+# check if any b/b combos in bbc_L2_inc_tbl NOT in train_nycp
+bbc_L3_tbl %>%
+    anti_join(train_nycp, by = c("borough","building_class_at_time_of_sale"))
+    
+# Then determine price for these combinations as average sale_price,
+# Determine average using k-fold cross-validation
+rmse_v_L3 <- map_df(1:length(index_list), function(listIdx) {
+    # split data into training and test set
+    train_set <- train_nycp[-index_list[[listIdx]], ]
+    test_set <- train_nycp[index_list[[listIdx]], ]
+    
+    # calculate different average prices on training set
+    price_L3_tbl <- train_set %>%
+        left_join(bbc_L3_tbl, 
+                   by = c("borough","building_class_at_time_of_sale")) %>%
+        group_by(borough, building_class_at_time_of_sale) %>%
+        summarise(nprices = n(),
+                  price_hat = mean(sale_price),
+                  price_hat_w = log10mean(sale_price),
+                  price_hat_med = median(sale_price))
+    
+    # calculate RMSE in test set, ONLY FOR THOSE ROWS for which
+    # square footage is neither directly available (>=10) nor
+    # can be approximated (total_units > 0)
+    predictions <- test_set %>%
+        filter(gross_square_feet < 10 & total_units == 0) %>%
+        inner_join(price_L3_tbl,
+                   by = c("borough","building_class_at_time_of_sale")) %>%
+        mutate(perdiff = price_hat / sale_price - 1,
+               perdiff_w = price_hat_w / sale_price - 1,
+               perdiff_med = price_hat_med / sale_price - 1)
+    predictions %>%
+        summarise(RMSE_avg = mean(perdiff),
+                  RMSE_avg_w = mean(perdiff_w),
+                  RMSE_avg_med = mean(perdiff_med),
+                  RMSE_med = median(perdiff),
+                  RMSE_med_w = median(perdiff_w),
+                  RMSE_med_med = median(perdiff_med))
+    })
+
+# evaluate results 
+rmse_v_L3 %>% summarise_all(mean)
+rmse_v_L3 %>% summarise_all(sd)
+
+# STEP 3 DECISION:
+#-> take the MEDIAN to calculate prices where sq ft not available
+
+price_L3_tbl <- train_nycp %>%
+    left_join(bbc_L3_tbl, 
+              by = c("borough","building_class_at_time_of_sale")) %>%
+    group_by(borough, building_class_at_time_of_sale) %>%
+    summarise(nprices = n(),
+              price_hat_med = median(sale_price))
+
+# remove temporary variables
+rm(train_set, test_set, predictions)
+
+################################################################################
+# 3.5.3.4 Extrapolate Square Foot Table - for same building class
+################################################################################
+
+# check which b/bc combos are not in price_gsf_L2_tbl,
+# but in overall combination of borough/building class
+bldg_classes <- 
+    sort(unique(nycproperty_raw$building_class_at_time_of_sale))
+borough_bldg_class = expand.grid(borough = factor(c(1,2,3,4,5)), 
+                           building_class_at_time_of_sale = bldg_classes)
+
+# extend table of prices/sqft with all borough/bldg class combinations
+price_gsf_L2_tbl_inc <-
+    price_gsf_L2_tbl %>%
+    right_join(borough_bldg_class, 
+               by = c("borough","building_class_at_time_of_sale"))
+
+# helper function to fill in $/sqft table
+price_gsf_lookup <- function(price_tbl, building_class) {
+    price_tbl %>%
+        filter(building_class_at_time_of_sale == building_class &
+                   !is.na(nprices)) %>%
+        group_by(building_class_at_time_of_sale) %>%
+        summarise(price_per_gsf_harm = sum(nprices*price_per_gsf_harm)/
+                      sum(nprices))
+    }
+
+# initialise
+price_gsf_L2_tbl_aug <- price_gsf_lookup(price_gsf_L2_tbl_inc,"A0")
+
+# algo: for rows with nprices = NA, take average from other rows
+# iterate over all building classes
+for(bc in bldg_classes_only) {
+    # determine number of rows needed to extrapolate
+    nrows_needed <- price_gsf_L2_tbl_inc %>%
+        filter(building_class_at_time_of_sale == bc &
+                   is.na(nprices)) %>% nrow()
+    # only do if any rows needed 
+    if(nrows_needed > 0) {
+        # determine how many rows are available
+        nrows_available <- price_gsf_L2_tbl %>%
+            filter(building_class_at_time_of_sale == bc) %>% nrow()
+        # if none available, nothing will be done
+        if(nrows_available > 0) {
+            newrows <- price_gsf_L2_tbl_inc %>%
+                filter(building_class_at_time_of_sale == bc &
+                           is.na(nprices)) %>%
+                do(price_gsf_lookup(price_tbl = price_gsf_L2_tbl,
+                                    building_class = bc))
+            
+            if(bc == bldg_classes_only[1]) {
+                price_gsf_L2_tbl_aug <- newrows
+            } else {
+                price_gsf_L2_tbl_aug <- rbind(price_gsf_L2_tbl_aug, newrows)
+                }
+            }
+        }
+    }
+
+# merge the two tables
+price_gsf_L2_tbl_inc <- price_gsf_L2_tbl_inc %>%
+    left_join(price_gsf_L2_tbl_aug,
+              by = c("borough", "building_class_at_time_of_sale")) %>%
+    mutate(price_per_gsf_harm = ifelse(is.na(nprices), price_per_gsf_harm.y,
+                                  price_per_gsf_harm.x)) %>%
+    select(borough, building_class_at_time_of_sale, nprices,
+           price_per_gsf_harm)
+
+# augmented table no longer needed
+rm(price_gsf_L2_tbl_aug)
+
+################################################################################
+# 3.5.3.5 Extrapolate Square Foot Table - for major building class
+################################################################################
+
+# that still leaves blocks without any price/sqft, look these up
+bldg_classes_to_fill <- price_gsf_L2_tbl_inc %>%
+    filter(is.na(price_per_gsf_harm)) %>% 
+    group_by(building_class_at_time_of_sale) %>% 
+    summarise(n = n()) %>% .$building_class_at_time_of_sale %>% sort()
+
+# second helper function to fill in price/sqft
+price_gsf_fill <- function(price_tbl, bldg_class) {
+    # extract main class
+    main_class = str_sub(bldg_class, 1, 1)
+    # take average price over all prices/sqft with that main class
+    res <- price_tbl %>%
+        mutate(mainclass = str_sub(building_class_at_time_of_sale,1,1)) %>%
+        filter(mainclass == main_class) %>%
+        group_by(mainclass) %>%
+        summarise(price_per_gsf_harm = sum(nprices*price_per_gsf_harm)/
+                      sum(nprices)) %>%
+        select(-mainclass)
+    res <- res %>% 
+        mutate(building_class_at_time_of_sale = bldg_class)
+    return(res)
+    }
+
+# initialise
+price_gsf_L2_tbl_aug <- price_gsf_fill(price_gsf_L2_tbl, 
+                                       bldg_classes_to_fill[1])
+
+# iterate over all building classes
+for(bc in bldg_classes_to_fill) {
+    # filter for only building class and then apply function to fill
+    newrows <- price_gsf_L2_tbl_inc %>%
+        filter(building_class_at_time_of_sale == bc) %>%
+        do(price_gsf_fill(price_tbl = price_gsf_L2_tbl,
+                            bldg_class = bc))
+    
+    # for first row assign to augmented table, otherwise extend
+    # the augmented table
+    if(bc == bldg_classes_to_fill[1]) {
+        price_gsf_L2_tbl_aug <- newrows
+    } else {
+        price_gsf_L2_tbl_aug <- rbind(price_gsf_L2_tbl_aug, newrows)
+        }
+    }
+
+# warnings -> check which ones not filled
+setdiff(bldg_classes_to_fill, 
+        price_gsf_L2_tbl_aug %>%
+            group_by(building_class_at_time_of_sale) %>%
+            distinct(building_class_at_time_of_sale) %>% 
+            .$building_class_at_time_of_sale)
+# So T2, U1, U6
+
+# Anything in training set?
+train_nycp %>%
+    filter(building_class_at_time_of_sale %in% c("T2", "U1", "U6")) %>% View()
+# One data row, not worth bothering
+
+# Anything in test set?
+test_nycp %>%
+    filter(building_class_at_time_of_sale %in% c("T2", "U1", "U6"))
+# Nothing, so no bother
+
+# merge the two tables again
+price_gsf_L2_tbl_inc <- price_gsf_L2_tbl_inc %>%
+    left_join(price_gsf_L2_tbl_aug,
+              by = c("borough", "building_class_at_time_of_sale")) %>%
+    mutate(price_per_gsf_harm = ifelse(!building_class_at_time_of_sale %in%
+                                           bldg_classes_to_fill, 
+                                       price_per_gsf_harm.x,
+                                       price_per_gsf_harm.y)) %>%
+    select(borough, building_class_at_time_of_sale, nprices, 
+           price_per_gsf_harm) 
+
+# discard temporary table
+rm(price_gsf_L2_tbl_aug)
+
+################################################################################
+# 3.5.3.6 Define Prediction Function
+################################################################################
+
+#' Function to predict prices hierarchically
+#' 
+#' @param newdata Property data for which to predict sale price
+#' @param price_gsf_tbl Table of prices per gross sq ft per
+#' borough / building class combination
+#' @param model_gsqf_totalunits Model to predict gross square feet from number
+#' of total units (total_units)
+#' @param price_tbl Table of prices per borough / building class combination 
+predict_price_sqf <- function(newdata,
+                              price_gsf_tbl,
+                              model_gsqf_totalunits,
+                              price_tbl) {
+    newdata %>%
+        left_join(price_gsf_tbl, 
+                  by = c("borough", "building_class_at_time_of_sale")) %>%
+        mutate(method = ifelse(gross_square_feet >= 10, "gsf",
+                               ifelse(total_units > 0, "gsf_hat", "price"))) %>% 
+        mutate(gsf = ifelse(gross_square_feet >= 10,
+                            gross_square_feet,
+                            ifelse(total_units > 0, 
+                                   predict(model_gsqf_totalunits, newdata = .),
+                                   NA))) %>% 
+        left_join(price_tbl, 
+                  by = c("borough", "building_class_at_time_of_sale")) %>% 
+        mutate(sale_price_hat = 
+                   ifelse(method %in% c("gsf", "gsf_hat"),
+                          gsf * price_per_gsf_harm,
+                          price_hat_med),
+               perdiff = sale_price_hat/sale_price - 1) %>%
+        .$sale_price_hat
+    }
+
+# res_ec_test %>%
+#     gather(avg_type, per_diff, perdiff:perdiff_harm) %>%
+#     filter(between(per_diff, -4, 4)) %>%
+#     ggplot(aes(x = per_diff, fill = method)) +
+#     geom_density(bw = 0.05, col = "black") +
+#     facet_grid(method ~ avg_type, scales = "free")
+
+# prediction function
+
+# predict prices, with class median
+price_hat_sqf <- predict_price_sqf(test_nycp,
+                             price_gsf_tbl = price_gsf_L2_tbl_inc,
+                             model_gsqf_totalunits = train_bbc_L1_inc,
+                             price_tbl = price_L3_tbl)
+# calculate RMSE and store in results table
+rmse_sqf <- RMSE_price(price_hat_sqf, test_nycp$sale_price)
+
+################################################################################
+# 3.5.4 Additional Effect - Building Class Category
+################################################################################
+
+################################################################################
+# 3.5.5 Additional Effect - Location (ZIP Code)
+################################################################################
+
+################################################################################
+# 3.5.6 Additional Effect - Year Built
+################################################################################
+
+################################################################################
+# 3.5.7 Additional Effect - Month Sold (Seasonality)
+################################################################################
 
 
 ################################################################################
@@ -1337,8 +1759,8 @@ format(min(nycproperty_raw$sale_date), "%d %b %Y")
 ################################################################################
 
 # save on demand
-save.image(file = "nycproperty_20200528.Rdata")
+save.image(file = "nycproperty_20200529.Rdata")
 
 # load on demand
-load(file = "nycproperty_20200528.Rdata")
+load(file = "nycproperty_20200529.Rdata")
 
