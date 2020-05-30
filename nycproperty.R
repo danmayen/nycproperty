@@ -388,6 +388,10 @@ train_nycp %>% sample_n(size = 100) %>% .$gross_square_feet
 
 # Addition: Net Square footage
 train_nycp %>%
+    mutate(gross_square_feet = str_replace(gross_square_feet,"-","0"),
+           land_square_feet = str_replace(land_square_feet,"-","0")) %>%
+    mutate(gross_square_feet = parse_number(gross_square_feet),
+           land_square_feet = parse_number(land_square_feet)) %>%
     mutate(net_square_feet = gross_square_feet -
                land_square_feet) %>%
     select(gross_square_feet, land_square_feet,
@@ -403,11 +407,15 @@ train_nycp %>%
 
 # availability in conjunction with sale prices
 train_nycp %>%
+    mutate(gross_square_feet = str_replace(gross_square_feet,"-","0"),
+           land_square_feet = str_replace(land_square_feet,"-","0")) %>%
+    mutate(gross_square_feet = parse_number(gross_square_feet),
+           land_square_feet = parse_number(land_square_feet)) %>%
     mutate(net_square_feet = gross_square_feet -
                land_square_feet) %>%
     mutate(net_sqf_avail = (net_square_feet > 0),
-           gross_sqf_avail = (gross_square_feet >= FOOTAGE_MIN),
-           land_sqf_avail = (land_square_feet >= FOOTAGE_MIN),
+           gross_sqf_avail = (gross_square_feet >= 10),
+           land_sqf_avail = (land_square_feet >= 10),
            sale_price_avail = (sale_price > 0)) %>%
     group_by(sale_price_avail, net_sqf_avail,
              gross_sqf_avail, land_sqf_avail) %>%
@@ -712,10 +720,6 @@ save(train_nycp, test_nycp, file = "data/nycp_split_trans.Rdata")
 
 # Define constants for square footage - below 10 sqft area is not meaningful
 FOOTAGE_MIN <- 10
-
-################################################################################
-# 3.4.0 General prices
-################################################################################
 
 
 ################################################################################
@@ -1399,18 +1403,6 @@ predict_price_sqf <- function(newdata,
     }
 
 
-
-################################################################################
-# 3.5.5 Additional Effect - Location (ZIP Code)
-################################################################################
-
-################################################################################
-# 3.5.6 Additional Effect - Year Built
-################################################################################
-
-################################################################################
-# 3.5.7 Additional Effect - Month Sold (Seasonality)
-################################################################################
 
 
 ################################################################################
